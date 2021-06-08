@@ -1,6 +1,6 @@
 /*
  * **************************************************
- *  Copyright (C) 2017 Ping Identity Corporation
+ *  Copyright (C) 2021 Ping Identity Corporation
  *  All rights reserved.
  *
  *  The contents of this file are subject to the terms of the
@@ -49,41 +49,27 @@ import com.pingidentity.sdk.template.TemplateRendererUtilException;
 
 /**
  *
- * This class is an example of an IdP adapter that demonstrates the use of the Velocity Template Render {@link TemplateRendererUtil}
+ * This class is an example of an IdP adapter that generates a browser cookie
  *
- * This adapter is meant to be mapped in an SP connection that when invoked will present end users with a form prompting
- * input for a 'username' that can then be used later in a policy flow.
- *
- * This class does not handle any session state support, adapter chaining or input validation.
+ * The adapter is meant to be mapped as a step in an Authentication Policy, after one or more
+ * adapters and prior to a Policy Contract.
  *
  */
+
 public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
 
     private static final Logger log = LogManager.getLogger(CreateCookieAdapter.class);
 
     private static final String ADAPTER_NAME = "Create Cookie";
     private static final String USERNAME = "username";
-    private static final String FORM_COOKIE_NAME_FIELD = "Cookie Name";
-    private static final String FORM_COOKIE_DOMAIN_FIELD = "Cookie Domain";
-    private static final String FORM_COOKIE_PATH_FIELD = "Cookie Path";
-
-	private SessionStateSupport sessionState = new SessionStateSupport();
-	
-    /**
-     * This is used to pass in session state between this adapter and the PromptForPassword adapter 
-     * what source the user came from.
-     * 
-     * In this example it is only used t show how to pass values in session state between two adapters.
-     * The value it self in this example is for demo and not actually used in the following adapter.
-     * 
-     */
-    public static final String USER_LOCATION_SOURCE_ATTRIBUTE = "User_Location_Source";
-
+    private static final String COOKIE_NAME = "Cookie Name";
+    private static final String COOKIE_VALUE = "Cookie Value";
+    private static final String COOKIE_DOMAIN = "Cookie Domain";
+    private static final String COOKIE_PATH = "Cookie Path";
 
     // Fields
     private IdpAuthnAdapterDescriptor descriptor = null;
     private Configuration configuration = null;
-
 
     /**
      * Constructor for the Create Cookie adapter. Initializes the adapter descriptor so PingFederate can
@@ -91,24 +77,29 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
      */
 
     public CreateCookieAdapter() {
-    	log.debug("Entering constructor: CreateCookieAdapter");
+    	log.debug("=== Entering constructor: CreateCookieAdapter");
         // Create input text field to represent name of velocity html template file
 
-        TextFieldDescriptor formCookieName = new TextFieldDescriptor(FORM_COOKIE_NAME_FIELD, "Name of your HTTP Cookie.  For example, SomeCookie.  Required.");
+        TextFieldDescriptor formCookieName = new TextFieldDescriptor(COOKIE_NAME, "Name of your HTTP Cookie.  For example, SomeCookie.  Required.");
         formCookieName.setDefaultValue("SomeCookie");
         formCookieName.addValidator(new RequiredFieldValidator());
 
-        TextFieldDescriptor formCookieDomain = new TextFieldDescriptor(FORM_COOKIE_DOMAIN_FIELD, "Cookie domain.  For example, example.com");
+        TextFieldDescriptor formCookieValue = new TextFieldDescriptor(COOKIE_VALUE, "Value of your cookie.  For example, false");
+        formCookieValue.setDefaultValue("true");
+        formCookieValue.addValidator(new RequiredFieldValidator());
+
+        TextFieldDescriptor formCookieDomain = new TextFieldDescriptor(COOKIE_DOMAIN, "Cookie domain.  Such as example.com");
         formCookieDomain.setDefaultValue("localhost");
         formCookieDomain.addValidator(new RequiredFieldValidator());
 
-        TextFieldDescriptor formCookiePath = new TextFieldDescriptor(FORM_COOKIE_PATH_FIELD, "Name of your HTTP Cookie.  For example, /something/");
+        TextFieldDescriptor formCookiePath = new TextFieldDescriptor(COOKIE_PATH, "Path of your Cookie.  For example, /something/");
         formCookiePath.setDefaultValue("/");
         formCookiePath.addValidator(new RequiredFieldValidator());
 
         // Create an adapter GUI descriptor
         AdapterConfigurationGuiDescriptor configurationGuiDescriptor = new AdapterConfigurationGuiDescriptor(ADAPTER_NAME);
         configurationGuiDescriptor.addField(formCookieName);
+        configurationGuiDescriptor.addField(formCookieValue);
         configurationGuiDescriptor.addField(formCookieDomain);
         configurationGuiDescriptor.addField(formCookiePath);
 
@@ -116,7 +107,7 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
         Set<String> attributeContract = new HashSet<String>();
         attributeContract.add(USERNAME);
         this.descriptor = new IdpAuthnAdapterDescriptor(this, ADAPTER_NAME, attributeContract, true, configurationGuiDescriptor, false);
-    	log.debug("Leaving constructor: CreateCookieAdapter");
+    	log.debug("=== Leaving constructor: CreateCookieAdapter");
     }
 
     /**
@@ -138,9 +129,9 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
 
     @Override
     public void configure(Configuration config) {
-    	log.debug("Entering method: configure");
+    	log.debug("=== Entering method: configure");
         this.configuration = config;
-    	log.debug("Leaving method: configure");
+    	log.debug("=== Leaving method: configure");
 
     }
 
@@ -155,18 +146,13 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
 
     @Override
     public IdpAuthnAdapterDescriptor getAdapterDescriptor() {
-    	log.debug("Entering/Leaving method: getAdapterDescriptor");
+    	log.debug("=== Entering/Leaving method: getAdapterDescriptor");
         return this.descriptor;
     }
 
      /**
      * This is an extended method that the PingFederate server will invoke during processing of a single sign-on
-     * transaction to lookup information about an authenticated security context or session for a user at the external
-     * application or authentication provider service.
-     * <p>
-     * In this example, the adapter simply returns the username entered by user as part of its adapter contract. It
-     * renders a template to request use input.
-     * </p>
+     * transaction
      *
      * @param req
      *            the HttpServletRequest can be used to read cookies, parameters, headers, etc. It can also be used to
@@ -192,22 +178,31 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
 
     @Override
     public AuthnAdapterResponse lookupAuthN(HttpServletRequest req, HttpServletResponse resp, Map<String, Object> inParameters) throws AuthnAdapterException, IOException {
+
+        // debug
+
+        // using for-each loop for iteration over Map.entrySet()
+        for (Map.Entry<String,Object> entry : inParameters.entrySet())
+            log.debug("==== Key = " + entry.getKey());
+
+        // debug
+
         AuthnAdapterResponse authnAdapterResponse = new AuthnAdapterResponse();
 
-        log.debug("Entering method: lookupAuthN");
+        log.debug("=== Entering method: lookupAuthN");
 
-        // Handle Submit if clicked
         Map<String, Object> attributeMap = new HashMap<String, Object>();
-        attributeMap.put(USERNAME, "michael@example.com");
+
+        attributeMap.put(USERNAME, "placeholder");
        
-        log.debug("debug: " + configuration.getFieldValue(FORM_COOKIE_NAME_FIELD));
+        log.debug("=== debug: " + configuration.getFieldValue(COOKIE_NAME));
 
         // lets create the cookie
 
-        Cookie cookie = new Cookie(configuration.getFieldValue(FORM_COOKIE_NAME_FIELD), "myCookieValue");
+        Cookie cookie = new Cookie(configuration.getFieldValue(COOKIE_NAME), configuration.getFieldValue(COOKIE_VALUE));
 
-        cookie.setDomain(configuration.getFieldValue(FORM_COOKIE_DOMAIN_FIELD));
-        cookie.setPath(configuration.getFieldValue(FORM_COOKIE_PATH_FIELD));
+        cookie.setDomain(configuration.getFieldValue(COOKIE_DOMAIN));
+        cookie.setPath(configuration.getFieldValue(COOKIE_PATH));
         cookie.setSecure(true);
         cookie.setHttpOnly(true);
         
@@ -216,19 +211,13 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
         // tell pingfederate that this adapter was a roaring success
 
         authnAdapterResponse.setAttributeMap(attributeMap);
-        authnAdapterResponse.setUsername(req.getParameter(USERNAME));
+
         authnAdapterResponse.setAuthnStatus(AUTHN_STATUS.SUCCESS);
         
-        /*
-            * Passing value in state to next adapter 
-            */
+        log.debug("=== Leaving method: lookupAuthN");
 
-        String userSourceValue = "some source value for HARDCODED";
-        log.debug("what is being placed in " + USER_LOCATION_SOURCE_ATTRIBUTE + " is " + userSourceValue);
-        sessionState.setAttribute(USER_LOCATION_SOURCE_ATTRIBUTE,  userSourceValue, req, resp, true);
-
-        log.debug("Leaving method: lookupAuthN");
         return authnAdapterResponse;
+
     }
 
     /**
@@ -255,18 +244,18 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
      */
 
     private void renderForm(HttpServletRequest req, HttpServletResponse resp,  Map<String, Object> inParameters) throws AuthnAdapterException {
-        log.debug("Entering method: renderForm");
+        log.debug("=== Entering method: renderForm");
 
     	Map<String, Object> params = new HashMap<String, Object>();
         params.put("resumePath", inParameters.get(IN_PARAMETER_NAME_RESUME_PATH));
         params.put("username", USERNAME);
 
         try {
-            TemplateRendererUtil.render(req, resp, configuration.getFieldValue(FORM_COOKIE_NAME_FIELD), params);
+            TemplateRendererUtil.render(req, resp, configuration.getFieldValue(COOKIE_NAME), params);
         } catch (TemplateRendererUtilException e) {
             throw new AuthnAdapterException(e);
         }
-        log.debug("Leaving method: renderForm");
+        log.debug("=== Leaving method: renderForm");
     }
 
     /**
@@ -306,7 +295,7 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
      */
     @Override
     public boolean logoutAuthN(Map authnIdentifiers, HttpServletRequest req, HttpServletResponse resp, String resumePath) throws AuthnAdapterException, IOException {
-    	log.debug("Entering/Leaving method: logoutAuthN");
+    	log.debug("=== Entering/Leaving method: logoutAuthN");
     	return true;
     }
 
@@ -321,7 +310,7 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
      */
     @Override
     public Map<String, Object> getAdapterInfo() {
-    	log.debug("Entering/Leaving method: getAdapterInfo");
+    	log.debug("=== Entering/Leaving method: getAdapterInfo");
         return null;
     }
 
@@ -334,7 +323,7 @@ public class CreateCookieAdapter implements IdpAuthenticationAdapterV2 {
     @Deprecated
     public Map lookupAuthN(HttpServletRequest req, HttpServletResponse resp, String partnerSpEntityId, AuthnPolicy authnPolicy, String resumePath) throws AuthnAdapterException, IOException {
 
-    	log.debug("Entering/Leaving method: lookupAuthN deprecated");
+    	log.debug("=== Entering/Leaving method: lookupAuthN deprecated");
     	throw new UnsupportedOperationException();
 
     }
